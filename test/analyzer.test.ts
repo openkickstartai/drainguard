@@ -92,3 +92,34 @@ spec:
     expect(findings).toHaveLength(0);
   });
 });
+
+  it('analyzes multi-document YAML files separated by ---', () => {
+    const multiDoc = `
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          image: app:1
+---
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          image: worker:1
+`;
+    const findings = analyzeK8sManifest(multiDoc, 'all.yaml');
+    // Both documents should produce DG101 + DG102 + DG103 findings
+    const dg101 = findings.filter(f => f.rule === 'DG101');
+    const dg102 = findings.filter(f => f.rule === 'DG102');
+    const dg103 = findings.filter(f => f.rule === 'DG103');
+    expect(dg101).toHaveLength(2);
+    expect(dg102).toHaveLength(2);
+    expect(dg103).toHaveLength(2);
+  });
+});

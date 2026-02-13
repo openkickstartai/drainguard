@@ -1,4 +1,4 @@
-import { load } from 'js-yaml';
+import { loadAll } from 'js-yaml';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -10,10 +10,13 @@ export interface Finding {
   line?: number;
 }
 
+const RE_ENTRYPOINT = /^ENTRYPOINT\s/i;
+const RE_CMD = /^CMD\s/i;
+
 export function analyzeDockerfile(content: string, file: string): Finding[] {
   const findings: Finding[] = [];
   const lines = content.split('\n');
-  lines.forEach((raw, i) => {
+    if (RE_ENTRYPOINT.test(trimmed)) {
     const trimmed = raw.trim();
     if (trimmed.startsWith('#') || trimmed === '') return;
     if (/^ENTRYPOINT\s/i.test(trimmed)) {
@@ -22,7 +25,7 @@ export function analyzeDockerfile(content: string, file: string): Finding[] {
         findings.push({
           rule: 'DG001', severity: 'error', file, line: i + 1,
           message: 'ENTRYPOINT uses shell form — SIGTERM will NOT reach your process. Use exec form: ENTRYPOINT ["executable", "arg"]',
-        });
+    if (RE_CMD.test(trimmed)) {
       }
     }
     if (/^CMD\s/i.test(trimmed)) {
@@ -35,37 +38,40 @@ export function analyzeDockerfile(content: string, file: string): Finding[] {
       }
     }
   });
-  return findings;
-}
-
 export function analyzeK8sManifest(content: string, file: string): Finding[] {
   const findings: Finding[] = [];
-  let doc: any;
-  try { doc = load(content); } catch { return findings; }
-  if (!doc || typeof doc !== 'object') return findings;
-  const podSpec = doc?.spec?.template?.spec || doc?.spec;
-  if (!podSpec || typeof podSpec !== 'object') return findings;
-  if (podSpec.terminationGracePeriodSeconds === undefined) {
-    findings.push({
-      rule: 'DG101', severity: 'warning', file,
-      message: 'terminationGracePeriodSeconds not set — defaults to 30s. Set it explicitly to match your actual shutdown duration.',
-    });
+  let docs: unknown[];
+  try { docs = loadAll(content) as unknown[]; } catch { return findings; }
+  for (const doc of docs) {
+    if (!doc || typeof doc !== 'object') continue;
+    const d = doc as Record<string, any>;
+    const podSpec = d?.spec?.template?.spec || d?.spec;
+    if (!podSpec || typeof podSpec !== 'object') continue;
+    if (podSpec.terminationGracePeriodSeconds === undefined) {
+      findings.push({
+        rule: 'DG101', severity: 'warning', file,
+        message: 'terminationGracePeriodSeconds not set — defaults to 30s. Set it explicitly to match your actual shutdown duration.',
+      });
+    }
+    const containers: any[] = podSpec.containers || [];
+    for (const c of containers) {
+      const name = c.name || 'unnamed';
+      if (!c.lifecycle?.preStop) {
+        findings.push({
+          rule: 'DG102', severity: 'warning', file,
+          message: `Container "${name}": no preStop hook. Add "sleep 5" to let kube-proxy propagate iptables rule removal before SIGTERM.`,
+        });
+      }
+      if (!c.readinessProbe) {
+        findings.push({
+          rule: 'DG103', severity: 'warning', file,
+          message: `Container "${name}": no readinessProbe. Without it, the endpoint won't be removed from Service during shutdown.`,
+        });
+      }
+    }
   }
-  const containers: any[] = podSpec.containers || [];
-  for (const c of containers) {
-    const name = c.name || 'unnamed';
-    if (!c.lifecycle?.preStop) {
-      findings.push({
-        rule: 'DG102', severity: 'warning', file,
-        message: `Container "${name}": no preStop hook. Add "sleep 5" to let kube-proxy propagate iptables rule removal before SIGTERM.`,
-      });
-    }
-    if (!c.readinessProbe) {
-      findings.push({
-        rule: 'DG103', severity: 'warning', file,
-        message: `Container "${name}": no readinessProbe. Without it, the endpoint won't be removed from Service during shutdown.`,
-      });
-    }
+  return findings;
+}
   }
   return findings;
 }
